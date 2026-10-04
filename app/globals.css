@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark terminal base — the palette is tokens (tailwind.config.ts),
+   not stylesheets. Everything below is either a Tailwind directive
+   or a one-line base rule (frontend.md §The aesthetic). */
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  @apply bg-zinc-950;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-200 antialiased;
+}
+
+::selection {
+  @apply bg-violet-500/30 text-zinc-100;
+}

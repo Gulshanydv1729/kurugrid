@@ -1,0 +1,9 @@
+services:
+  kurugrid:
+    build:
+      context: .
+      args:
+        # Inlined at build time; override per environment.
+        NEXT_PUBLIC_KURU_MARKET_ADDRESS: ${NEXT_PUBLIC_KURU_MARKET_ADDRESS:-}
+    ports:
+      - "8080:80"

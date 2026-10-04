@@ -1,0 +1,10 @@
+node_modules
+.next
+out
+.git
+.opencode
+*.log
+.env
+.env*.local
+Dockerfile
+docker-compose.yml
