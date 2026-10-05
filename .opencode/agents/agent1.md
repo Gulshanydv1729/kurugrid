@@ -94,6 +94,8 @@ dispatch — a stale table is worse than no table.
 | 8 | `app/page.tsx` composition root     | frontend  | `DONE`       | depends on 3, 6, 7 — all present, build green       |
 | 9 | `next.config.mjs` static export     | `agent1`  | `DONE`       | `output: "export"` set; `npm run build` emits `out/` |
 | 10| `README.md`                         | `pitch`   | `DONE`       | market address documented as required; limitations present |
+| 11| Landing surface (`Landing.tsx` + `#terminal` anchor) | frontend | `DONE` | `tsc` + `lint` + `build` green; `npx serve out` smoke test: hero/pillars/how-it-works/trust copy prerendered, demo + connect CTAs wired, anchor scrolls, no address in view-source |
+| 12| Login gate before the terminal | frontend | `DONE` | login screen first (`address === null && !dryRun`); wallet error shown on login; sign-out returns to login; static output contains zero terminal strings |
 
 **Steps 4, 5, 7 and 9 are `READY` right now.** Dispatch them immediately rather
 than idling the frontend peer behind step 3 — they have no dependency on the
@@ -465,13 +467,21 @@ project done, drive the running app and confirm:
 
 Recorded so no later agent "fixes" them back.
 
-1. **The reference price is the live ticker, midpoint fallback.** Reversed
-   2026-10-04 per operator request. `lib/marketFeed.ts` polls Binance
-   (primary) then CoinGecko every 3 s; on failure the last good sample is
-   kept, and until the first sample the range midpoint is used. MON/USDC
-   maps to the ETH/USDC liquid reference pair. The preview and the
-   broadcast still consume the same `markPrice` in one pass, so they
-   cannot diverge.
+1. **The reference price is the on-chain Kuru orderbook mid, range-midpoint
+   fallback.** Re-decided 2026-10-05, superseding both the 2026-10-04 entry
+   (ETH/USDT ticker) and the original midpoint-only decision. `lib/marketBook.ts`
+   reads `OrderBook.getL2OrderBook` every 10 s; the last good snapshot is kept on
+   failure, and the range midpoint is used only before the first snapshot.
+   `lib/marketFeed.ts` is **deleted**. Rationale, and do not "fix" this back:
+   ETH/USDT is a different asset in a different venue, and applying it to a
+   $0.045–$0.055 MON/USDC grid put every level below the mark — all legs became
+   bids, the bid/ask split collapsed, and `calculateGridOrders` threw. An
+   on-chain book is also the *better* demo: real best bid/ask and block number
+   instead of a CEX price, and it removes an external HTTP dependency that a
+   CORS-blocked or offline judging network would break. A mark outside
+   `[lower, upper]` is deliberately **not** an error — that is a real market
+   state, and the ladder comes back all-bid or all-ask with
+   `validateGridConfig.markInRange === false` so the UI can say so.
 2. **`MAX_GRID_COUNT` is 20, and that is a wallet limit, not a protocol limit.**
    Every leg is a separate signature. Monad's parallelism is what makes the
    broadcast fast; it does not make the operator click faster. Do not raise the
@@ -543,6 +553,51 @@ project remembers why it is the way it is.
   verifier greps `Math.random`; mock pacing stays visible without it.
 - 2026-10-04 — Added `Dockerfile`/`docker-compose.yml` (Node build → nginx
   serve of `out/`). Reason: reproducible run; leader market inlined at build.
+- 2026-10-05 — **Mark price re-decided: the on-chain Kuru orderbook mid**,
+  replacing the ETH/USDT ticker; `lib/marketFeed.ts` deleted. Reason: the
+  ticker priced a MON/USDC grid in ETH, which put every level below the mark,
+  collapsed the bid/ask split, and made `calculateGridOrders` throw. Chosen
+  over the midpoint-only fallback because the on-chain book is both honest and
+  a stronger demo, and because dropping the external HTTP dependency removes a
+  CORS/offline failure mode from a hackathon demo.
+- 2026-10-05 — **A mark outside the configured range is no longer an error.**
+  Reason: with a genuinely live mark this fires constantly, and blanking the
+  ladder is worse than showing an honest all-bid or all-ask grid.
+  `validateGridConfig.markInRange` surfaces it instead of hiding it.
+- 2026-10-05 — **One `notionalPerLevelSlice()` helper** shared by the preview
+  and the build. Reason: they were computed separately, so the panel told the
+  operator to fund 666.6 MON while the chain required 666.6667. A preview that
+  disagrees with the broadcast is not a preview.
+- 2026-10-05 — **Wallet state extracted to `lib/wallet/`.** Reason: the
+  address lived in React state *and* a ref carrying the provider, and a network
+  switch failing mid-connect left the ref holding a live provider the UI did
+  not believe in. `store.ts` is kept React-free and `useWallet.ts` is kept down
+  to `useSyncExternalStore`, so the store stays drivable by a scratch harness —
+  with no test runner, testability-by-construction is the only story available.
+- 2026-10-05 — **Landing lives in-page above the terminal, no `/landing` route.**
+  Reason: a standalone route buries the demo behind a click — the opposite of
+  the one-gesture thesis — and static export keeps every route one scroll away
+  anyway. `components/Landing.tsx` (hero, pillars, how-it-works, trust strip)
+  anchors to `#terminal` in `app/page.tsx` via a click-handler
+  `scrollIntoView`, so the server pass stays DOM-free.
+- 2026-10-05 — **Terminal gated behind a login screen, wallet-connect only.**
+  Reason: operator asked for login-first; with zero backend the only honest
+  "login" is the wallet snapshot (or the no-wallet demo), so the gate is
+  `address === null && !dryRun` in `app/page.tsx` — no credentials, no
+  session, nothing persisted. Sign-out disconnects and clears the flag.
+  Reason: a standalone route buries the demo behind a click — the opposite of
+  the one-gesture thesis — and static export keeps every route one scroll away
+  anyway. `components/Landing.tsx` (hero, pillars, how-it-works, trust strip)
+  anchors to `#terminal` in `app/page.tsx` via a click-handler
+  `scrollIntoView`, so the server pass stays DOM-free.
+- 2026-10-05 — **`agentplanner.md` rows 2.3 and 2.5 left open deliberately.**
+  2.3: `tickSize`/`minSize`/`maxSize` are still fetched and never applied, now
+  the most significant open gap; and the SDK's `approveToken` was *not* adopted
+  because it returns a tx hash rather than a receipt, so it cannot verify
+  `status === 1` the way the current path does. That trade-off needs
+  re-examining, not assuming. 2.5: `useDeferredValue` skipped because
+  recalculation over <=20 levels is trivial and the complexity buys no
+  measured gain.
 
 ### Pending dispatches (assigned 2026-10-04)
 

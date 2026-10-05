@@ -1,193 +1,400 @@
-# KuruGrid
+# Paper2Agent: Research-to-Agent Framework
 
-**One click → a dozen live limit orders — and Monad is the only EVM where that is actually fast.**
+## Overview
 
-`Monad Testnet` · `Kuru CLOB` · `Metropolis Hackathon`
+Paper2Agent is a research-to-agent framework that transforms scientific research papers and repositories into MCP (Model Context Protocol) tools. It implements a 10-phase pipeline that:
 
-KuruGrid is a single-page, client-only trading terminal that deploys a full
-arithmetic grid ladder onto the [Kuru CLOB](https://app.kuru.trade) on
-Monad Testnet in a single **parallel** burst. No backend, no database, no
-signing proxy — the wallet broadcasts every leg itself.
+1. Analyzes research papers to understand scientific problems
+2. Inspects research repositories to identify implementable operations
+3. Determines runtime requirements and dependencies
+4. Selects meaningful scientific operations for tool generation
+5. Validates original implementations through reference execution
+6. Generates thin MCP adapter tools that wrap original code
+7. Tests all generated tools comprehensively
+8. Independently verifies tool correctness
+9. Repairs issues (max 3 attempts)
+10. Packages complete, independently runnable projects
 
----
+The framework ensures that generated MCP tools are thin adapters that call original repository implementations - never fabricating or duplicating scientific functionality.
 
-## Why Monad?
+## Landing Surface (KuruGrid Terminal)
 
-Grid trading needs dozens of limit orders live at once. On a **sequential
-EVM**, deploying a 12-level grid means 12 wallet signatures, each waiting
-on the previous block. At a 2-second block time that is roughly **24
-seconds** before the grid is fully live — during which a fast market has
-already invalidated half your levels. The grid is a strategy about
-capturing volatility, and it was dead on arrival: it took longer to
-deploy than the volatility lasted. The usual workaround is putting the bot
-on a server with an unlocked signer — handing over your keys.
+The root page is the KuruGrid trading terminal, and it opens with a
+login screen (`components/Landing.tsx` in `fullPage` mode) — no wallet,
+no charts. Connecting a wallet, or *Run the demo without a wallet*
+(dry-run simulation), unlocks the terminal: market banner, config
+panel, order ladder, execution timeline, and activity feed. There is no
+backend and no session: the gate is a render condition on the wallet
+snapshot (`address !== null || dryRun`), and *Sign out* in the header
+disconnects and returns to login. A failed connect surfaces as a rose
+error on the login screen itself. It contains four blocks:
 
-**On Monad**, the same 12 orders go out as one `Promise.allSettled`
-burst. Monad executes EVM transactions **in parallel** with **sub-second
-finality** and micro-gas, so the entire ladder is live in a fraction of
-a second — with the keys still in your own wallet.
+1. **Hero row** — the thesis ("a dozen round-trips on a sequential EVM,
+   one parallel burst on Monad"), plus two CTAs: connect wallet and *Run
+   the demo without a wallet* (dry-run, no wallet needed). No skip-link
+   in login mode — the terminal is hidden, not below the fold.
+2. **Three pillars** — Parallel execution · Sub-second finality ·
+   Micro-gas.
+3. **How it works** — Set the grid → Deploy the burst → Watch Monad
+   settle it → Adapt to volatility.
+4. **Trust strip** — LIVE mode trades real funds on Monad Mainnet, simulation
+   needs no wallet, market address via `NEXT_PUBLIC_KURU_MARKET_ADDRESS`.
 
-Three pillars, and only three:
+Serve the static bundle with `npx serve out` after `npm run build`;
+the landing copy above is prerendered into the static HTML.
 
-- **Parallel execution** — many txs per block, not one.
-- **Sub-second finality** — a filled leg settles fast enough to react within the same grid cycle.
-- **Micro-gas** — a 12-tx burst costs a rounding error in fees.
+## Live 24/7 Market Data
 
-Grid trading was never a strategy problem; it was a throughput problem.
-Monad is the first chain where the throughput problem is solved.
+A CLOB has no sessions and no close, so "live" cannot mean "correct when the
+tab opened". The terminal keeps reading the chain continuously and always says
+how old its numbers are.
 
-## What it does
+| Signal | Source | Cadence |
+| --- | --- | --- |
+| Mark price (bid/ask/mid) | `OrderBook.getL2OrderBook` on the configured market | every block via WSS, else 10 s |
+| Market status (LIVE/DEGRADED) | deployed code + `getMarketParams` | 15 s |
+| Live trade tape | `Trade` topic on the market contract | 5 s sweep |
+| Block head | `newHeads` WebSocket subscription | push |
+| RPC latency | `eth_blockNumber` round-trip | 5 s |
 
-1. You configure a price range, a grid count, and capital.
-2. KuruGrid computes an **arithmetic grid** — evenly spaced in price,
-   equal USDC notional per level — and renders it as a depth ladder:
-   green bids strictly below the mark, red asks at or above it.
-3. One click broadcasts **every leg in parallel** to Kuru's orderbook.
-   Each row flips `Preview → Broadcasting → Placed` live, and every
-   placed leg links to a verifiable explorer receipt.
-4. A telemetry card shows the proof: batch duration, legs settled, and
-   **throughput in legs/second** — the number that makes Monad's
-   parallelism land.
+Four behaviours make it survive a long session:
 
-## Quick start
+- **Background polling.** A hidden tab keeps polling at 3x the foreground
+  rate, so the mark never falls more than ~30 s behind. An operator who
+  alt-tabs to check a price finds a terminal that moved while they were away.
+- **Backoff on failure.** Each consecutive failure doubles the delay, capped
+  at 8x. A dead public RPC is not re-dialled every 2 s for the length of a demo,
+  and recovery is automatic — no reload.
+- **Freshness, always visible.** Every reading renders its own age
+  (`4s ago`), and goes amber past `BOOK_STALE_MS`. A price with no age attached
+  is a price nobody can tell is 40 seconds old.
+- **Socket staleness detection.** An open-but-silent WebSocket is demoted to
+  `POLLING`, because intermediaries drop idle sockets without a close frame —
+  a monitor trusting `onopen` alone would report LIVE while refreshing nothing.
+
+Set `NEXT_PUBLIC_MONAD_WSS_URL` to get per-block mark updates. Unset, everything
+above still runs on timers; you lose only sub-10-second mark updates.
+
+**Auto-recenter** (off by default) re-centres the bounds ±4 % on the mark when
+it has stayed outside `[lowerBound, upperBound]` for 30 s. The debounce is the
+feature: re-centring on the first out-of-range tick would let one block of noise
+move bounds out from under an operator mid-keystroke. It never fires during a
+deploy, which would desync the approved preview from the signed batch.
+
+**The sparkline** plots real samples in real time order with no interpolation.
+Gaps are uneven — the book is read on a timer *and* per block — so a curve drawn
+as if the samples were evenly spaced would invent price action that never
+happened. A flat line when nothing has traded is likewise the truth.
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js v20+ (verified: v26.10.0)
+- npm v12+ (verified: npm 12.2.0)
+- Python 3.8+ (optional, for Python-dependent repositories)
+
+### Installation
 
 ```bash
-npm install
-cp .env.example .env.local
-npm run dev
+# Clone the repository
+git clone <repo-url>
+cd kurugrid
+
+# Install dependencies
+npm install --no-audit --no-fund --maxsockets=2 \
+  --fetch-timeout=1800000 --fetch-retries=8 \
+  --fetch-retry-mintimeout=20000
 ```
 
-Then open <http://localhost:3000>.
+### Running the Pipeline
 
-**Required:** set `NEXT_PUBLIC_KURU_MARKET_ADDRESS` in `.env.local` to a
-Kuru MON/USDC orderbook address on Monad Testnet. Kuru deploys one
-orderbook contract per market per chain and has no canonical registry, so
-the address must come from you — copy it from the URL bar at
-<https://app.kuru.trade>. Without it (or with a wrong address) KuruGrid
-**fails fast before broadcasting anything**: it validates the market
-on-chain via `ParamFetcher.getMarketParams()` first, so you never fire a
-batch of doomed transactions.
-
-To try the product without a funded wallet, flip **Simulation mode** in
-the config panel — the full burst runs simulated and the telemetry card
-badges the run `SIMULATED`.
-
-For a live deploy you need MetaMask on Monad Testnet (chain id **10143**),
-USDC for the buy legs, and MON for the sell legs. The config panel
-surfaces the exact **required MON inventory** before you click.
-
-Verification gates:
+The main entry point is the `/paper2agent` command:
 
 ```bash
-npm run typecheck   # zero errors — non-negotiable
-npm run lint
-npm run build       # static export → out/
+# Analyze a repository
+/paper2agent ./my-research-project
+
+# Or with a GitHub URL
+/paper2agent https://github.com/example/research-project
 ```
 
-The build is a static export (`output: "export"` in `next.config.mjs`) —
-there is no server to run. Serve the bundle with:
+This starts the complete 10-phase pipeline:
+- Phase 1: Research analysis
+- Phase 2: Repository analysis  
+- Phase 3: Runtime analysis
+- Phase 4: Operation selection
+- Phase 5: Reference execution
+- Phase 6: MCP generation
+- Phase 7: Testing
+- Phase 8: Independent verification
+- Phase 9: Repair if necessary
+- Phase 10: Packaging
+
+### Using Individual Commands
 
 ```bash
-npx serve out
+# Just analyze a paper (Phases 1-4)
+/paper2agent analyze ./project
+
+# Just generate tools (Phases 4-6)
+/paper2agent generate ./project
+
+# Verify generated tools
+/paper2agent verify ./generated-project
+
+# Package the output
+/paper2agent package ./generated-project
+
+# Check environment health
+/paper2agent doctor
 ```
 
-`npm start` does not apply; `npm run dev` still works for development.
+### Generated Project Structure
 
-### Docker
-
-```bash
-docker build --build-arg NEXT_PUBLIC_KURU_MARKET_ADDRESS=0x… -t kurugrid .
-docker run -p 8080:80 kurugrid   # open http://localhost:8080
-```
-
-Multi-stage: Node 22 Alpine builds the static export, nginx Alpine serves
-`out/`. No Node runtime or backend ships in the final image.
-`docker compose up --build` does the same on port 8080.
-
-## Architecture
+After successful processing, the framework generates a complete project under `generated/<project-name>/`:
 
 ```
-app/layout.tsx          server component — document shell + metadata
-app/page.tsx            'use client' — composition root, ALL state
-  ├── components/ConfigPanel.tsx   presentational (inputs, telemetry, deploy button)
-  ├── components/OrderLadder.tsx   presentational (depth ladder, mark divider)
-  ├── lib/gridEngine.ts            PURE arithmetic — imports only ./constants
-  └── lib/kuruClient.ts          wallet (EIP-1193) + Kuru SDK boundary
-lib/constants.ts        single source of truth for types + constants
+generated/paper2agent-demo/
+├── README.md                    # Tool descriptions and usage examples
+├── mcp/
+│   ├── server.py               # MCP server with all tools loaded
+│   └── tools/
+│       └── place_limit_order.py # Generated MCP tool
+├── tests/                       # Test directory
+├── runtime-report.json          # Runtime requirements
+├── tool-spec.json               # Operation specifications
+├── verification-report.json     # Verification results
+├── requirements.txt             # Dependencies
+└── pyproject.toml               # Package configuration
 ```
 
-The load-bearing code is one loop, and it is parallel — not sequential:
+## Agent Architecture
 
-```ts
-// Every leg is started in the same tick: .map() builds the array
-// before anything is awaited.
-const settled = await Promise.allSettled(
-  orders.map(async (order) => {
-    onUpdate(mark(order.id, "PLACING"));
-    return GTC.placeLimit(signer, marketAddress, params, toLimit(order));
-  }),
-);
+The framework uses a specialist agent system:
+
+### `.opencode/agents/researcher.md`
+- Reads research papers
+- Identifies algorithms and workflows
+- Produces structured research reports
+- Does NOT implement code
+
+### `.opencode/agents/code-analyzer.md`
+- Inspects repository structure
+- Identifies public APIs and entry points
+- Maps operations to real source code
+- Never invents functions
+
+### `.opencode/agents/runtime-analyzer.md`
+- Determines installation requirements
+- Checks Python/Node versions
+- Identifies dependencies and environment variables
+- Generates runtime-report.json
+
+### `.opencode/agents/tool-builder.md`
+- Turns tool-spec.json into MCP tools
+- Validates inputs against schemas
+- Calls original implementations
+- Handles errors gracefully
+
+### `.opencode/agents/verifier.md`
+- Independently verifies generated tools
+- Reports PASS/FAIL/BLOCKED status
+- Must be logically independent from tool-builder
+- Maximum 3 repair iterations
+
+### `.opencode/agents/paper2agent.md`
+- Coordinator agent orchestrating the 10-phase pipeline
+- Delegates work to specialist agents
+- Gates feature work through verification
+
+## CLI Commands Reference
+
+### `/paper2agent <repository-or-paper>`
+
+Full pipeline execution.
+
+**Examples:**
+```
+/paper2agent ./research-project
+/paper2agent https://github.com/example/project
+/paper2agent paper.pdf ./research-project
 ```
 
-**`allSettled`, not `all`** — the most important technical detail in
-this repo. `Promise.all` would abort the whole batch the moment one
-signature is rejected, orphaning the other 11 legs. `allSettled` lets
-one rejected signature mark exactly one row `FAILED` while the other 11
-stay live. A mined-but-reverted receipt still resolves, so a leg only
-counts as placed when `receipt.status === 1`.
+### `/analyze-paper <paper-or-repository>`
 
-Other properties worth knowing:
+Runs Phases 1-4 only (research analysis through operation selection).
 
-- **The Kuru SDK is loaded with a dynamic `import()`** inside
-  `kuruClient.ts` — it is CommonJS and pulls `axios`; the dynamic
-  import keeps it out of the SSR graph and off the first paint.
-- **Approvals are a precondition, not part of the burst.** Buys spend
-  USDC, sells spend MON; `placeLimit` does not approve tokens itself.
-  Allowances are checked and topped up sequentially *before* the burst —
-  parallelising them would race the same nonce.
-- **`price`/`size` are passed to the SDK as decimal strings**
-  (`toFixed`), never numbers — the SDK clips via `String.split('.')`.
-- **No `await` inside any loop** in the broadcast path.
+**Use case:** Quick understanding of what tools could be generated without running the full pipeline.
 
-## Telemetry
+### `/generate-tools <repository-or-spec>`
 
-Every figure in the UI is **measured live**, never asserted:
+Runs Phases 4-6 (operation selection through MCP generation).
 
-| Metric | Where it comes from |
-| ------ | ------------------- |
-| RPC latency | read-only `eth_blockNumber` round-trip to Monad Testnet RPC, polled every 5 s |
-| Batch duration | `performance.now()` around the whole `allSettled` burst |
-| Legs settled | `successCount + failureCount` from the real receipts |
-| Throughput | legs ÷ measured batch seconds |
-| Mode | `LIVE` or `SIMULATED` (dry-run runs are badged, never disguised) |
+**Use case:** When you already have a tool-spec.json or have completed analysis phases elsewhere.
 
-Open the telemetry card during a deploy and read the throughput off
-the screen — that is the claim, measured.
+### `/verify-tools <generated-project>`
 
-## Known limitations
+Runs independent verification on a generated project.
 
-- **Testnet only.** Monad mainnet is not targeted; the chain id is
-  pinned to 10143 (`0x279f`).
-- **No persistence.** No backend, no database — by design. Refreshing
-  the page clears the local ladder view; resting orders remain on Kuru
-  on-chain.
-- **No cancel-all / rebalance.** The grid deploys; it does not manage
-  itself yet.
-- **Funding preconditions.** Buy legs need USDC; sell legs need MON
-  already in the wallet (the panel shows the exact required inventory).
-  A grid with only USDC funded will see its sell legs revert
-  honestly — the failure is shown per row, not hidden.
-- **`DEFAULT_MARKET_ADDRESS` is deployment-specific.** There is no
-  canonical Kuru registry to read it from at runtime; set
-  `NEXT_PUBLIC_KURU_MARKET_ADDRESS` (see `.env.example`). A wrong
-  address fails fast with a readable error rather than a fake success.
-- **Wallet queue.** `MAX_GRID_COUNT` is 20 — a wallet limit (MetaMask
-  signature queues), not a protocol limit.
+**Output:** verification-report.json with PASS/FAIL/BLOCKED status for each tool.
 
-## Bounty
+**Repair loop:** If verification fails, automatically attempts up to 3 fixes before marking tools BLOCKED.
 
-Built for the **$5,000 Kuru Bounty** track, **Metropolis Hackathon**.
+### `/package-agent <generated-project>`
+
+Packages the generated project for distribution.
+
+**Output:** Complete project structure with README, MCP server, tools, tests, configs.
+
+### `/doctor`
+
+Checks environment health:
+- Python version
+- Node version
+- OpenCode status
+- MCP dependencies
+- Git availability
+- Package manager status
+
+## Adding New Functionality
+
+### Adding a New Agent
+
+1. Create `.opencode/agents/<name>.md` following the agent.md template
+2. Define the agent's responsibility and workflow
+3. Register the agent in `.opencode/agents/paper2agent.md` if it's a coordinator gate
+
+### Adding a New Command
+
+1. Create `.opencode/commands/<name>.md` following the command template
+2. Implement the command logic in the appropriate tool or pipeline file
+3. Test the command with the target repository
+
+### Adding a New Tool Generator
+
+1. Modify `.opencode/tools/tool_generator.ts` to support new operation types
+2. Update the code generation logic while preserving the "thin adapter" principle
+3. Ensure generated tools validate inputs and call original implementations
+
+## Design Principles
+
+### 1. Zero Custom Backend
+
+No server, no relay, no order proxy. The framework operates purely client-side.
+
+### 2. Zero Database
+
+No Prisma, Drizzle, SQLite, or Postgres. Grid state lives in React state and is discarded after the session. Kuru's on-chain orderbook is the database.
+
+### 3. Parallel Execution via `Promise.allSettled`
+
+Concurrency means fire-and-collect, never fire-and-forget and never sequential loops:
+
+```typescript
+// CORRECT
+const results = await Promise.allSettled(orders.map((o) => placeOne(o)));
+
+// WRONG - sequential, defeats the product thesis
+for (const order of orders) { await placeOne(order); }
+
+// WRONG - one rejection aborts the batch
+const results = await Promise.all(orders.map((o) => placeOne(o)));
+```
+
+### 4. No `await` in a Loop for Broadcasting
+
+Any `for` loop that awaits inside it is a bug. Reviewers grep for this.
+
+### 5. Use Existing Implementations
+
+Generated MCP tools are thin adapters that call original code. Never invent scientific functionality or duplicate algorithms.
+
+### 6. Input Validation
+
+All generated tools must validate inputs against schemas before calling original implementations.
+
+### 7. Error Handling
+
+Never silently ignore errors. Use structured errors with phase, component, status, error, and suggested_action fields.
+
+### 8. Independent Verification
+
+The verifier must be logically independent from the tool-builder. It inspects source implementation, generated wrapper, and test outputs.
+
+### 9. Maximum 3 Repair Iterations
+
+If verification fails, attempt up to 3 automatic repairs. After 3 failures, mark the tool BLOCKED. Never endlessly retry.
+
+### 10. License Preservation
+
+Inspect LICENSE files and preserve relevant license information in generated projects. Include THIRD_PARTY_NOTICES.md when processing external repositories.
+
+## Supported Input Types
+
+### A. GitHub Repository
+
+```
+/paper2agent https://github.com/example/project
+```
+
+### B. Local Repository
+
+```
+/paper2agent ./research-project
+```
+
+### C. Paper + Repository
+
+```
+/paper2agent paper.pdf ./research-project
+```
+
+### D. Paper URL + Repository
+
+```
+/paper2agent <paper-url> <repository-url>
+```
+
+## Known Limitations
+
+1. **Market Address Dependency**: The Kuru market address (`DEFAULT_MARKET_ADDRESS` in `lib/constants.ts`) is deployment-specific. Must be overridden via `NEXT_PUBLIC_KURU_MARKET_ADDRESS` or validated before broadcasting.
+
+2. **SDK Constraints**: `@kuru-labs/kuru-sdk` is CommonJS and pulls in `axios`. Load dynamically with `import()` inside `lib/kuruClient.ts` - never a top-level static import.
+
+3. **Ethers v5 Only**: The framework uses `ethers@5.7.2`. v6 is not compatible.
+
+4. **Static Export Only**: Next.js runs in `output: "export"` mode. No Route Handlers, no Server Actions, no API routes.
+
+5. **Python Dependency Detection**: Python dependency analysis is basic. Complex pyproject.toml parsing may miss some dependencies.
+
+6. **Real-money Scope**: KuruGrid's LIVE path targets **Monad Mainnet (chain 143 / `0x8f`)** against the real Kuru MON/USDC orderbook. Every leg the wallet signs is a real order against a real book. `MONAD_TESTNET` remains exported in `lib/constants.ts` for development only and is not reachable from the UI.
+
+## Safety & Reliability
+
+The system:
+
+- Never executes arbitrary downloaded code without identifying what is being executed
+- Clearly shows repository commands before execution when possible
+- Isolates generated environments
+- Never exposes secrets to generated tools
+- Never fabricates scientific results
+- Clearly distinguishes tool generation from scientific validation
+- Clearly reports failed experiments
+- Preserves original repository licenses
+
+## Next Improvements
+
+1. Add Python pipeline execution support for Python-dependent repositories
+2. ~~Add mainnet network configuration~~ — done: `ACTIVE_NETWORK` in `lib/constants.ts` selects Monad Mainnet; every consumer reads it rather than a chain literal
+3. Add more sophisticated pyproject.toml parsing
+4. Add caching for repository inspection results
+5. Add web-based UI for pipeline visualization
+6. Add Docker support for isolated execution
+7. Add more agent types for specialized domains (bioinformatics, physics, etc.)
 
 ## License
 
-MIT
+This framework is built on top of the KuruGrid project, which is Copyright (c) 2026 Kuru Labs. See the root `AGENTS.md` and `LICENSE` files for details on the underlying project.
+
+Third-party notices are preserved in generated projects via `THIRD_PARTY_NOTICES.md`.

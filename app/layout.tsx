@@ -14,7 +14,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: `${APP_NAME} — ${APP_TAGLINE}`,
   description:
-    "Deploy a full arithmetic grid ladder onto the Kuru CLOB on Monad Testnet in a single parallel burst. Client-only — keys never leave the wallet.",
+    "Deploy a full arithmetic grid ladder onto the Kuru CLOB on Monad Mainnet in a single parallel burst. Client-only — keys never leave the wallet.",
 };
 
 export default function RootLayout({

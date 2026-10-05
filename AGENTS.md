@@ -8,7 +8,7 @@
 ## 1. Project objective
 
 **KuruGrid** is a single-page, client-only trading terminal that deploys a full
-**arithmetic grid ladder** onto the **Kuru CLOB** on **Monad Testnet** in a
+**arithmetic grid ladder** onto the **Kuru CLOB** on **Monad Mainnet** in a
 single *parallel* burst.
 
 The product thesis — and the thing the judges grade — is:
@@ -56,24 +56,64 @@ surface.
 
 ---
 
-## 3. Network constraints (Monad Testnet)
+## 3. Network constraints (Monad **Mainnet**)
 
-These are fixed. Do not "helpfully" refactor them into env vars with different
-defaults, and do not add mainnet support.
+> **Changed 2026-10-05.** The LIVE path was migrated from Testnet to Mainnet.
+> The old text read "do not add mainnet support" — that instruction has been
+> executed and is now retired. What replaced it is stricter, not looser; see
+> the mainnet rules at the end of this section.
+
+The live network is fixed. `ACTIVE_NETWORK` in `lib/constants.ts` is the single
+selection point, and **every consumer reads it rather than a chain literal** —
+that is a hard rule, because the bug this migration existed to fix was the app
+asserting one chain while its provider talked to another.
 
 | Property        | Value                                             |
 | --------------- | ------------------------------------------------- |
-| Chain ID (dec)  | `10143`                                           |
-| Chain ID (hex)  | `0x279f`                                          |
-| Chain name      | `Monad Testnet`                                   |
+| Chain ID (dec)  | `143`                                             |
+| Chain ID (hex)  | `0x8f`                                            |
+| Chain name      | `Monad Mainnet`                                   |
 | Native token    | `MON`                                             |
-| RPC             | `https://testnet-rpc.monad.xyz`                   |
-| Explorer base   | `https://testnet.monadexplorer.com`               |
-| Tx link format  | `https://testnet.monadexplorer.com/tx/{hash}`     |
+| RPC (primary)   | `https://rpc.monad.xyz`                           |
+| RPC (fallback)  | `https://rpc-mainnet.monadinfra.com`              |
+| Explorer base   | `https://monadexplorer.com`                       |
+| Tx link format  | `https://monadexplorer.com/tx/{hash}`             |
 | Block explorer tx lookup | `.../api?module=proxy&action=eth_getTransactionReceipt` |
 
-Source of truth: `MONAD_TESTNET` in `lib/constants.ts`. Every other module
-imports from there.
+Both RPCs were probed and return chain id `0x8f`. Two exist because mainnet
+public endpoints rate-limit harder than testnet ones; `rpcUrls[0]` is what gets
+offered to `wallet_addEthereumChain`.
+
+`MONAD_TESTNET` (10143) is **retained but not live**. It exists so a
+faucet-safe path survives for debugging a broken mainnet integration. Nothing in
+`app/`, and nothing on the live path in `lib/`, may reference it — a testnet
+orderbook address means nothing on mainnet, because Kuru deploys a separate
+orderbook per chain.
+
+### 3.1 Mainnet rules
+
+These are the constraints that did not exist under testnet. They are
+non-negotiable for the same reason §4's rules are.
+
+- **Never `MaxUint256`.** `ensureAllowance` approves the exact amount the batch
+  needs. An unlimited approval is a standing permission for the orderbook to move
+  any amount of the operator's tokens, for as long as the contract lives, and it
+  survives across sessions with no UI ever showing it. The extra signature on a
+  second deploy is the correct trade.
+- **Market constraints are read, never assumed.** `fetchMarketConstraints`
+  derives tick size and min/max size from `getMarketParams` on-chain. The live
+  MON/USDC market reports **`minSize` = 200 MON** and `sizePrecision` 1e10, both
+  very different from plausible-looking hard-coded guesses. A ladder sized under
+  a wrong assumption reverts, leg by leg.
+- **Check conformance before asking for a signature.**
+  `checkGridAgainstMarket` runs in the preview so an illegal grid is refused
+  *before* the wallet queue fills. `placeParallelKuruOrders` still re-checks
+  inside the burst — the panel check is a courtesy to the operator, not the
+  guarantee.
+- **A tick snap is not a violation.** An off-tick price is repaired
+  deterministically by the broadcast path (at most half a tick). Only a size
+  outside the market's bounds is fatal. Conflating the two once blocked the
+  app's own default grid on 8 of 12 legs over a $3e-8 rounding.
 
 **Kuru market address** lives in `DEFAULT_MARKET_ADDRESS` in
 `lib/constants.ts`, overridable at build time with
@@ -81,6 +121,13 @@ imports from there.
 `lib/kuruClient.ts` calls `ParamFetcher.getMarketParams()` before broadcasting
 and surfaces a clear, actionable error if the address has no orderbook deployed.
 See §7.
+
+`KURU_MON_USDC_MARKET` (the orderbook) and `KURU_USDC_TOKEN_MAINNET` (the
+ERC-20 quote token) are named separately in `constants.ts` on purpose. Putting
+the USDC token in the market field yields an address that *has* code, so a
+`getCode` probe passes and the failure only surfaces later as "no orderbook
+here". The quote address the app actually uses is read from `getMarketParams`,
+never from the constant.
 
 ---
 
@@ -106,6 +153,14 @@ demonstration, which is about the *wallet* broadcasting in parallel.
 No Prisma, no Drizzle, no SQLite, no Postgres, no localStorage order cache, no
 IndexedDB. Grid state lives in React state for the lifetime of the session and
 is then discarded. Kuru's on-chain orderbook **is** the database.
+
+The wallet module (`lib/wallet/store.ts`) holds its snapshot in a module-level
+variable. That is **not** a violation: it is in-memory only, holds no
+credentials, and is discarded on reload — exactly the same lifetime as the React
+state it replaced, which also did not survive a refresh. There is no session
+cookie and no server-side session, so there is nothing here to persist. Do not
+"fix" this by adding storage; if a session is ever needed, that is a §4.1
+backend question and belongs to `agent1`, not to a fix in this file.
 
 ### 4.3 Parallel execution via `Promise.allSettled`
 
@@ -142,20 +197,62 @@ architect's sign-off.
 /
 ├── AGENTS.md                    architect   — this file, keep it true
 ├── README.md                    pitch
+├── changes.md                   agent1      — file map + change log
 ├── app/
 │   ├── layout.tsx               frontend
 │   ├── globals.css              frontend
 │   └── page.tsx                 frontend    — page composition + state only
 ├── components/
-│   ├── ConfigPanel.tsx          frontend
-│   └── OrderLadder.tsx          frontend
+│   ├── ConfigPanel.tsx          frontend    — inputs, telemetry, deploy button
+│   ├── OrderLadder.tsx          frontend    — depth ladder
+│   ├── ExecutionTimeline.tsx    frontend    — per-leg lifecycle list
+│   ├── ActivityFeed.tsx         frontend    — rolling event log
+│   ├── PriceSparkline.tsx       frontend    — recent mark path
+│   ├── StaleBadge.tsx           frontend    — freshness readouts + tape
+│   ├── Landing.tsx              frontend    — hero, connect CTA, demo entry
+│   └── ConnectButton.tsx        frontend    — consumes useWallet() directly
 ├── lib/
 │   ├── constants.ts             architect   — ALL shared types + constants
 │   ├── gridEngine.ts            web3        — pure grid arithmetic
-│   ├── kuruClient.ts            web3        — wallet + SDK boundary
-│   └── marketFeed.ts            web3        — live ticker, read-only fetch
+│   ├── kuruClient.ts            web3        — ethers + Kuru SDK boundary
+│   ├── marketBook.ts            web3        — on-chain L2 book → mark price
+│   ├── tradeFeed.ts             web3        — Trade topic sweep (the ticker)
+│   ├── liveChannel.ts           web3        — optional WSS newHeads feed
+│   ├── useBackgroundPoll.ts     web3        — visibility-aware poll + backoff
+│   └── wallet/                  web3        — wallet module (see below)
+│       ├── types.ts             web3        — no React, no runtime deps
+│       ├── store.ts             web3        — no React, no module-scope window
+│       ├── useWallet.ts         web3        — the ONLY file importing React
+│       └── index.ts             web3        — the only public entry point
 └── .opencode/agents/*.md        architect
 ```
+
+`lib/marketFeed.ts` was **deleted**. The mark price is now read from the
+configured Kuru orderbook on-chain (`lib/marketBook.ts`); the old Binance /
+CoinGecko ETH/USDT ticker was a different asset in a different venue and cannot
+be used to price a MON/USDC grid. Do not reintroduce it.
+
+### The wallet module
+
+`lib/wallet/` exists because the wallet address used to live in **two** places
+at once — React state *and* a ref holding the provider — and they could
+disagree: a network switch failing mid-connect left the ref populated with a
+provider the UI did not believe in. One immutable snapshot makes that class of
+bug unrepresentable.
+
+Two invariants, both load-bearing:
+
+- **`store.ts` imports no React and touches `window` only inside functions.**
+  It is a plain observable, so it can be driven by a scratch harness with no
+  DOM and no renderer. `useWallet.ts` is the only React binding.
+- **`getSnapshot()` must return a stable reference between transitions.**
+  `useSyncExternalStore` compares with `Object.is`; building a fresh object per
+  call re-renders forever. The snapshot is replaced wholesale only inside
+  `emit()`.
+
+`lib/wallet` depends *downward* on `lib/kuruClient`, which stays the single
+sanctioned `ethers` boundary. Import from `@/lib/wallet`, never from a file
+inside it — `subscribe`/`getSnapshot` are plumbing, not API.
 
 ---
 
@@ -187,8 +284,8 @@ Therefore:
    in `.env.example` and the README.
 2. Always let the operator override via `NEXT_PUBLIC_KURU_MARKET_ADDRESS`.
 3. **Validate before broadcasting** — call `ParamFetcher.getMarketParams()` and if
-   it throws, fail fast with "No Kuru orderbook at this address on Monad Testnet"
-   rather than firing 50 doomed transactions.
+   it throws, fail fast with "Kuru MON/USDC orderbook could not be loaded on
+   Monad Mainnet" rather than firing 50 doomed transactions.
 4. Never silently swallow this failure into the mock path. A wrong market address
    must surface as a real error, not as a cheerful fake success.
 

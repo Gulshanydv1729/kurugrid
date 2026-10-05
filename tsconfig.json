@@ -20,5 +20,12 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    // Sibling research-framework scaffolding, not part of the Next.js app:
+    // nothing in app/, components/ or lib/ imports from it, and its
+    // pipeline.ts calls helpers defined nowhere. Kept in the tree but out
+    // of `npm run typecheck` / `next build` so the gates judge the app.
+    "paper2agent"
+  ]
 }

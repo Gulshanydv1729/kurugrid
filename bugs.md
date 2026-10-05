@@ -328,13 +328,35 @@ a React re-render. With 20 legs settling at slightly different times, this
 causes up to 20 re-renders. Batching updates (e.g., collecting all updates
 and flushing them in a single `setOrders` call) would reduce renders.
 
-### O6 — Use `useSyncExternalStore` for wallet state
+### O6 — Use `useSyncExternalStore` for wallet state ✅ CLOSED
 
-**File:** `app/page.tsx:244-275`
+**File:** `lib/wallet/` (was `app/page.tsx:244-275`)
 
-The wallet event listeners could be abstracted into a custom hook using
-`useSyncExternalStore`, which is the React-recommended pattern for
-subscribing to external data sources.
+Shipped as a standalone module rather than a hook file: `types.ts` (no React),
+`store.ts` (no React, no module-scope `window`), `useWallet.ts` (the only React
+binding), `index.ts` (the only public entry point).
+
+Closing this also fixed a latent bug the recommendation did not name. The address
+used to be held in **two** places — React state *and* a ref carrying the
+provider — and they could disagree: when `checkAndSwitchNetwork` threw mid-connect,
+`handleConnect` never reached `setAddress`, so the UI showed "not connected" while
+`walletRef.current` kept a live provider. Three call sites (the telemetry poll,
+the market-status probe, and `handleDeploy`) went on reading that stale provider.
+One immutable snapshot with a single `disconnect()` transition that clears
+`account` and `provider` together makes the divergence unrepresentable.
+
+Chain-event subscription also moved out of the component tree and is now bound in
+`connect()` / torn down in `disconnect()`, rather than living for the whole
+session.
+
+> **Known defect in the shipped version:** on `accountsChanged` with an empty
+> account list, `store.ts` emits `DISCONNECTED` but does not call
+> `detachChainEvents()`. The listeners stay bound, so `subscribeChainEvents()`
+> later early-returns on its `detachChainEvents !== null` guard — a reconnect then
+> gets no listeners and account switches stop updating the UI. Related: the
+> `connect()` catch block spreads `...snapshot`, so a *failed reconnect* keeps the
+> previous `account`/`provider` alongside `status: "error"`. Both are fixes to
+> `lib/wallet/store.ts` only; neither touches `app/page.tsx`.
 
 ### O7 — Precompute grid levels
 
@@ -373,13 +395,53 @@ acceptable but worth noting.
 
 ## Summary
 
-| Category | Count | Critical |
-|----------|-------|----------|
-| Bugs | 14 | 0 blockers, 1 major, 13 minor |
-| Features | 8 | — |
-| Optimizations | 10 | — |
+Status as of 2026-10-05. Entries above keep their original text for provenance;
+the status lines below are the current truth. `changes.md` §3 carries the full
+before/after for each.
 
-**Top 3 to fix before demo:**
-1. **B1** — Ticker is ETH/USDT, not MON/USDC (misleading mark price)
-2. **B5** — Redundant RPC call in `connectWallet` (adds latency)
-3. **B2** — Unused timeout constant (hung RPC can wedge the UI)
+| Category | Count | Open | Closed |
+|----------|-------|------|--------|
+| Bugs | 14 | 0 | 14 |
+| Features | 8 | 0 | — (F1 rejected on the merits, not deferred) |
+| Optimizations | 10 | 9 | 1 (O6) |
+
+**Closed.** B1 (ETH ticker replaced by the on-chain Kuru orderbook — the mark now
+comes from `lib/marketBook.ts` and `lib/marketFeed.ts` is deleted), B2
+(`TELEMETRY_TIMEOUT_MS` now applied via `Promise.race`), B3 (one `WalletConnection`),
+B4 (`-32603` mapped to "The wallet is locked."), B5 (redundant
+`getSigner().getAddress()` removed), B6 (local `extractCode` replaced by
+`eip1193CodeOf`), B7 (telemetry provider memoised), B8 (`allowance.gte`), B9
+(cache lives in React state now that `marketFeed.ts` is gone), B10 (`tickDir`
+now only fires on an actual mid change), B11 (`useDeferredValue` territory
+deferred — see O3), B12 (`Sync to Market` now ±4% via `SYNC_BAND_PCT`), B13
+(module cache makes the re-import a no-op), B14 (`MaxUint256` carries an explicit
+do-not-copy-to-mainnet warning), O6.
+
+**Still worth doing, in order:**
+
+1. **Zero unit tests.** `agent1.md` §6 decision 4 bans a test runner, so grid
+   arithmetic is verified by a throwaway harness. The notional-slice bug (preview
+   said fund 666.6 MON, the chain wanted 666.6667) is exactly what a permanent
+   test would have caught — and so is the newer tick-snap gate defect, where a
+   first cut at the pre-deploy conformance check refused to deploy the app's own
+   default grid over a $3.3e-8 rounding. Two separate throwaway harnesses have
+   now earned their keep; that is the argument for making it permanent.
+2. **`lib/wallet/store.ts` — the two defects recorded under O6 above.** Both
+   remain open and are confined to that one file: `onAccountsChanged` with an
+   empty account list does not call `detachChainEvents()`, and `connect()`'s
+   catch spreads `...snapshot`, so a failed reconnect keeps a stale provider
+   alongside `status: "error"`.
+3. **Live placement has never been run against mainnet.** The migration was
+   verified as far as `estimateGas` with an unfunded `from` — which proves the
+   encoding and the 200 MON size rule, not that twenty signatures settle. See
+   changes.md §7 item 2.
+
+**Closed by the mainnet migration (2026-10-05):** the ignored
+`tickSize`/`minSize`/`maxSize` — `fetchMarketConstraints` now reads them on-chain
+and `checkGridAgainstMarket` refuses a non-conforming grid *before* the signature
+queue fills, with `placeParallelKuruOrders` still enforcing them inside the
+burst; and the `MaxUint256` approval, which was previously only a warning
+comment about not doing this on mainnet and is now the exact amount the batch
+needs. **`FILL_WATCH_ABI` is verified**: both transcribed signatures hash to the
+same topics as the SDK's own `abi/OrderBook.json`, so a drift cannot currently
+exist.

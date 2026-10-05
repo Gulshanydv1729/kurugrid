@@ -2,7 +2,7 @@
   "name": "kurugrid",
   "version": "1.0.0",
   "private": true,
-  "description": "Automated parallel grid-trading terminal on Monad Testnet x Kuru CLOB.",
+  "description": "Automated parallel grid-trading terminal on Monad Mainnet x Kuru CLOB.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

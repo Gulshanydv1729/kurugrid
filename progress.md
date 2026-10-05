@@ -3,38 +3,64 @@
 > Companion to `PLAN.md` (Steps 1–8). Updated as work lands.
 > Owner policy: `AGENTS.md`, `dependencies.md`, `.opencode/agents/*.md`.
 >
-> **2026-10-04 reconciliation (agent1):** the master status table now lives
-> in `.opencode/agents/agent1.md` §3 and shows every step DONE. The step
-> history below is kept for provenance; where it disagrees with §3, §3 wins.
+> **2026-10-05 reconciliation (agent1).** This file previously claimed "all
+> steps complete / audit passed" while its own footnote recorded 3 BLOCKER and
+> 3 MAJOR open findings. Both cannot be true. The blockers are now genuinely
+> closed and `changes.md` §3 carries the before/after for each, so this log has
+> been rewritten to describe the tree as it actually stands.
 >
-> **2026-10-04 correction (verifier):** the "all steps complete / audit passed"
-> status below was **not accurate** and has been corrected. The build gates are
-> green, but the verifier audit found **3 BLOCKERs and 3 MAJORs**, one of which
-> shipped *after* that claim was written. See "Verifier audit" at the foot of this
-> file. Do not read this log as "done".
+> **Sources of truth, in order:** the filesystem → `changes.md` → this file.
+> `.opencode/agents/agent1.md` §3 still carries the 10-step build plan. The step
+> history below is kept for provenance only and is **not** a status table.
 
 ---
 
-## Status: build green, audit NOT clean
+## Status: build green, all BLOCKERs and MAJORs closed
 
-Gates: `npx tsc --noEmit` clean · `npm run build` succeeds and emits `out/`
-(`output: "export"`). Structural audit greps are clean.
+Gates, re-verified 2026-10-05: `npm run typecheck` clean · `npm run lint` clean
+· `npm run build` succeeds and emits `out/` (`output: "export"`). Structural
+audit greps clean: no `Promise.all(`, no `await` inside a loop, no `: any`, no
+`localStorage`, no `suppressHydrationWarning`.
 
-**Not clean:** the verifier audit (V1 types / V2 SSR / V3 wallet errors / V4
-parallelism) returned 3 BLOCKER + 3 MAJOR + 5 MINOR. One BLOCKER is fixed (W1).
-The live-deploy path was non-functional until W1 landed, and the mark-price
-BLOCKER below was introduced *after* this file claimed the audit passed.
+The 2026-10-04 audit returned **3 BLOCKER + 3 MAJOR + 5 MINOR**. All six
+BLOCKER/MAJOR findings are now closed:
+
+| # | Finding | Resolution |
+| - | ------- | ---------- |
+| BLOCKER 1 | live deploy threw before broadcasting — `decimalsFromPrecision` applied `log10` to *token* decimals, so `log10(6) = 0.778` rejected every real market | split into `decimalsFromPrecision` (powers of ten) and `decimalsFromCount` (already a count) |
+| BLOCKER 2 | mark price was **ETH/USDT** from Binance, applied to a MON/USDC grid — every leg became a bid and `calculateGridOrders` threw | `lib/marketFeed.ts` **deleted**; the mark is now read from the on-chain Kuru orderbook via `lib/marketBook.ts` |
+| BLOCKER 3 | a simulated batch rendered as `LIVE` (the badge read the toggle, not `BatchResult.dryRun`) | badge reads `batch.dryRun`, plus a distinct violet "simulated (SDK unavailable)" notice |
+| MAJOR 1 | required MON inventory disagreed with the broadcast (`666.6` vs `666.6667`) | one `notionalPerLevelSlice()` used by both the preview and the build; verified across 5 configs |
+| MAJOR 2 | `TELEMETRY_TIMEOUT_MS` declared but never applied — a hung node froze the latency badge forever | `pingRpcLatency` races the call against the timeout |
+| MAJOR 3 | live throughput fell back to an invented `legs x 1000` when the burst rounded to 0 ms | `Math.max(1, ...)` denominator, identical to the dry-run path |
+
+**Still open** — none blocking a demo, all recorded in `bugs.md`:
+
+1. `tickSize` / `minSize` / `maxSize` are fetched from the market contract but
+   never applied; a leg off the tick grid or under the minimum reverts
+   on-chain. This is the most significant remaining gap.
+2. `FILL_WATCH_ABI` is hand-written rather than taken from the SDK, so a
+   signature drift would fail silently — fills would simply never be reported.
+3. No automated test suite, by architect decision (§6 decision 4). Grid
+   arithmetic is verified with throwaway harnesses.
+4. Two defects in `lib/wallet/store.ts`, recorded under `bugs.md` O6.
+
+## Build plan steps
+
+The original 8-step plan. All eight were delivered; the column below is
+provenance, not current status.
 
 | Step | Deliverable | Status |
 | ---- | ----------- | ------ |
-| 1 | Dependency pins in `package.json` | ✅ Done |
-| 2 | `npm install` verified | ✅ Done |
-| 3 | `app/globals.css` + `app/layout.tsx` | ✅ Done |
-| 4 | `components/OrderLadder.tsx` | ✅ Done |
-| 5 | `components/ConfigPanel.tsx` | ✅ Done |
-| 6 | `app/page.tsx` (composition root) | ✅ Done |
-| 7 | `README.md` | ✅ Done |
-| 8 | `typecheck` / `build` + verifier audit | 🟡 Build green · audit run 2026-10-04: 3 BLOCKER, 3 MAJOR, 5 MINOR (1 BLOCKER fixed) |
+| 1 | Dependency pins in `package.json` | Done |
+| 2 | `npm install` verified | Done |
+| 3 | `app/globals.css` + `app/layout.tsx` | Done |
+| 4 | `components/OrderLadder.tsx` | Done |
+| 5 | `components/ConfigPanel.tsx` | Done |
+| 6 | `app/page.tsx` (composition root) | Done |
+| 7 | `README.md` | Done |
+| 8 | `typecheck` / `build` + verifier audit | Done — audit re-run 2026-10-05: 0 BLOCKER / 0 MAJOR |
+
 
 ---
 
@@ -152,7 +178,7 @@ a green audit; these are different questions.
 
 ---
 
-## Verifier audit — 2026-10-04
+## Verifier audit — 2026-10-04 (historical; all BLOCKER/MAJOR closed by 2026-10-05)
 
 Adversarial pass over `lib/`, `app/`, `components/` against `verifier.md` V1–V4.
 **3 BLOCKER, 3 MAJOR, 5 MINOR.** The build gates above were green throughout, so
@@ -175,7 +201,7 @@ a raw ethers overflow throw. Verified with a scratch harness asserting both
 helpers against 1e8/1e6/1e2 precisions, 6/18/0/36 decimals, and the rejection
 cases — 14/14 pass.
 
-### BLOCKER 2 — the mark price is ETH, not MON (OPEN)
+### BLOCKER 2 — the mark price is ETH, not MON (CLOSED 2026-10-05)
 
 `app/page.tsx:89-90`:
 
@@ -200,7 +226,7 @@ The "otherwise the midpoint" fallback only holds until the first successful poll
 ("There is no live mark feed"). **A real MON price, if wanted, must come from the
 configured Kuru market — never from a different asset's ticker.**
 
-### BLOCKER 3 — a simulated batch renders as `LIVE` (OPEN)
+### BLOCKER 3 — a simulated batch renders as `LIVE` (CLOSED 2026-10-05)
 
 `components/ConfigPanel.tsx:317` reads the toggle, not the run:
 
@@ -215,7 +241,7 @@ toggle is off — so the telemetry card shows `LIVE` beside a fabricated
 *"A `console.warn` is not a disclosure."* Badge must read `batch.dryRun`, with a
 visible notice when the run was simulated but the toggle was off.
 
-### MAJOR — required MON inventory disagrees with the broadcast
+### MAJOR — required MON inventory disagrees with the broadcast (CLOSED)
 
 `lib/gridEngine.ts:116` rounds the notional slice to 2 dp before dividing by the
 mark; `lib/gridEngine.ts:266` uses `normalise(totalCapital / gridCount)` unrounded.
@@ -225,13 +251,13 @@ Reproduced: `cfg(0.045,0.055,3,100)` preview `666.6` vs actual `666.6667`;
 another. Only 2-dp-friendly configs (the seeded `120`/`12`) agree — which is why
 the step-2 gate passed.
 
-### MAJOR — `TELEMETRY_TIMEOUT_MS` is documented but never used
+### MAJOR — `TELEMETRY_TIMEOUT_MS` is documented but never used (CLOSED)
 
 `lib/constants.ts` declares it as a "hard ceiling … so a hung node cannot wedge
 the UI". Nothing reads it; `pingRpcLatency` has no timeout, so the `inFlight`
 guard latches and the header latency badge silently freezes on a stale value.
 
-### MAJOR — throughput falls back to an invented number
+### MAJOR — throughput falls back to an invented number (CLOSED)
 
 `lib/kuruClient.ts:668`: `durationMs > 0 ? … : working.length * 1000` prints
 `12000 legs/s` for 12 legs when the burst rounds to 0 ms. `runDryRun` guards this
@@ -285,3 +311,29 @@ Created `run.sh` — executable one-liner for install + build + dev:
 ```
 
 (Uses slow-network install flags from AGENTS.md §9.)
+
+---
+
+## Audit closure notes — 2026-10-05
+
+The findings above are preserved verbatim as written on 2026-10-04. Each was
+closed in a later session; the authoritative before/after is `changes.md` §3.
+
+- **BLOCKER 2** — resolved by *deleting the premise*, not by patching it.
+  `lib/marketFeed.ts` was removed outright and the mark is now read from the
+  configured Kuru orderbook on-chain (`lib/marketBook.ts`). This also removed an
+  external HTTP dependency from the demo, so a CORS-blocked or offline judging
+  network can no longer break the mark price.
+- **BLOCKER 3** — `ConfigPanel` now prefers `batch.dryRun` over the toggle, and
+  renders a distinct violet notice when a run was simulated with the toggle off.
+  A `console.warn` is not disclosure.
+- **MAJOR (inventory)** — one `notionalPerLevelSlice()` helper now feeds both the
+  preview and the build. Verified with a scratch harness over five
+  configurations; `cfg(0.045,0.055,3,100)` reads 666.6 in both places now.
+- **MAJOR (timeout)** — `Promise.race` against `TELEMETRY_TIMEOUT_MS`.
+- **MAJOR (throughput)** — `Math.max(1, ...)` denominator, so the figure is
+  always derived from the measurement and never from an invented constant.
+
+Two items from the MINOR list remain genuinely open and are now tracked in
+`bugs.md`: `tickSize`/`minSize`/`maxSize` are fetched and never applied, and
+`FILL_WATCH_ABI` is hand-written rather than sourced from the SDK.
