@@ -1,4 +1,5 @@
-import { ArrowDown, Gauge, Layers, Sparkles, Timer, Zap } from "lucide-react";
+import Image from "next/image";
+import { ArrowDown, Gauge, Layers, Sparkles, Timer } from "lucide-react";
 import { ACTIVE_NETWORK, APP_NAME, APP_TAGLINE, MARKET_LABEL } from "@/lib/constants";
 import { ConnectButton } from "./ConnectButton";
 
@@ -39,8 +40,16 @@ export function Landing({
       {/* Hero row */}
       <div className="flex flex-col items-start gap-4 px-5 py-6">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md border border-violet-500/30 bg-violet-500/10">
-            <Zap className="h-4.5 w-4.5 text-violet-400" />
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-violet-500/30 bg-violet-500/10 p-0.5">
+            <Image
+              src="/logo.png"
+              alt=""
+              width={32}
+              height={26}
+              // Static export emits no image optimiser.
+              unoptimized
+              className="h-auto w-full object-contain"
+            />
           </div>
           <div>
             <h2 className="text-base font-semibold text-zinc-100">{APP_NAME}</h2>

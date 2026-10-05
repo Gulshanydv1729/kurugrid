@@ -15,6 +15,16 @@ export const metadata: Metadata = {
   title: `${APP_NAME} — ${APP_TAGLINE}`,
   description:
     "Deploy a full arithmetic grid ladder onto the Kuru CLOB on Monad Mainnet in a single parallel burst. Client-only — keys never leave the wallet.",
+  // `app/icon.png` is auto-detected by the App Router, but naming it here too
+  // means the same asset is what Open Graph / link previews resolve to. It is
+  // a static export, so both must be plain files under `public/` or `app/`.
+  icons: { icon: "/icon.png", apple: "/icon.png" },
+  openGraph: {
+    title: `${APP_NAME} — ${APP_TAGLINE}`,
+    description:
+      "Parallel grid execution on Monad Mainnet. Dozens of Kuru limit orders, one wallet signature each, no backend.",
+    images: ["/logo.png"],
+  },
 };
 
 export default function RootLayout({

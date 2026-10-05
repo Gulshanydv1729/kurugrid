@@ -13,9 +13,10 @@
  * during render — so the server pass is clean (verifier.md V2).
  */
 
+import Image from "next/image";
 import confetti from "canvas-confetti";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, LogOut, Radio, Wallet, Zap } from "lucide-react";
+import { AlertTriangle, LogOut, Radio } from "lucide-react";
 import { ConfigPanel } from "@/components/ConfigPanel";
 import { OrderLadder } from "@/components/OrderLadder";
 import {
@@ -799,8 +800,16 @@ export default function Page() {
       <header className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center justify-between gap-3 px-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md border border-violet-500/30 bg-violet-500/10">
-              <Zap className="h-4 w-4 text-violet-400" />
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-violet-500/30 bg-violet-500/10 p-0.5">
+              <Image
+                src="/logo.png"
+                alt=""
+                width={28}
+                height={23}
+                // Static export emits no optimiser, so this has to be told.
+                unoptimized
+                className="h-auto w-full object-contain"
+              />
             </div>
             <div>
               <h1 className="text-sm font-semibold text-zinc-100">{APP_NAME}</h1>
