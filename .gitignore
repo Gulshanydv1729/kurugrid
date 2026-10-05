@@ -29,3 +29,62 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+
+
+# ================================
+# AI / Coding Agent files
+# ================================
+
+# OpenCode
+.opencode/
+opencode.json
+opencode.jsonc
+
+# Agent instructions
+AGENTS.md
+AGENTS.local.md
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Cursor
+.cursor/
+.cursorignore
+
+# GitHub Copilot
+.github/copilot/
+
+# Cline
+.clinerules/
+.cline/
+
+# Continue
+.continue/
+
+# Aider
+.aider*
+.aider/
+
+# Roo Code
+.roo/
+.rooignore
+
+# Gemini CLI
+.gemini/
+
+# Codex
+.codex/
+
+# AI-generated local plans / scratch files
+.agent/
+.agents/
+.agent-tmp/
+.agent-cache/
+.ai/
+.ai-cache/
+
+# Local agent logs / state
+*.agent.log
+agent.log
+agent-state.json
